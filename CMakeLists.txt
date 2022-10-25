@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.5)
 
 #It seems Cmake does not set default bild type so we force it
 if( NOT CMAKE_BUILD_TYPE )
@@ -6,6 +6,8 @@ if( NOT CMAKE_BUILD_TYPE )
 endif()
 
 project(freeopcua)
+
+include(CMakeParseArguments)
 
 option(BUILD_CLIENT "Build Client" ON)
 option(BUILD_SERVER "Build Server" ON)
@@ -19,15 +21,12 @@ OPTION(BUILD_SHARED_LIBS "Build shared libraries." ON)
 IF (NOT DEFINED CMAKE_INSTALL_LIBDIR)
     SET(CMAKE_INSTALL_LIBDIR lib)
 ENDIF ()
+IF (NOT DEFINED CMAKE_INSTALL_BINDIR)
+    SET(CMAKE_INSTALL_BINDIR bin)
+ENDIF ()
 
 SET (CMAKE_LIBRARY_OUTPUT_DIRECTORY
         ${PROJECT_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}
-        CACHE PATH
-        ""
-    )
-
-SET (CMAKE_RUNTIME_OUTPUT_DIRECTORY
-        ${PROJECT_BINARY_DIR}/bin
         CACHE PATH
         ""
     )
@@ -39,6 +38,13 @@ SET (CMAKE_ARCHIVE_OUTPUT_DIRECTORY
     )
 
 set(ADDITIONAL_PUBLIC_COMPILE_OPTIONS)
+
+if (WIN32)
+    # On Windows there are also shared and static libraries. Files ending in .dll are shared libraries. However, it is not possible to link
+    # against these files directly. They are the files to be loaded at runtime. This requires code such as when loading a library using
+    # dlopen in Linux.
+    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+ENDIF()
 
 # Helper function to generate a pkg-config file for a single library
 # Takes the filename of the .pc file as a parameter and replaces all
@@ -66,6 +72,22 @@ function(generate_pkgconfig TARGET_NAME)
         endif()
     endif()
 endfunction(generate_pkgconfig)
+
+function(add_library_helper)
+    set(prefix ARG_)
+    set(options)
+    set(oneValueArgs NAME)
+    set(multiValueArgs SRCS)
+    cmake_parse_arguments(PARSE_ARGV 0 "${prefix}" "${options}" "${oneValueArgs}" "${multiValueArgs}")
+
+    if (BUILD_SHARED_LIBS)
+        add_library(${${prefix}_NAME} SHARED "")
+    else()
+        add_library(${${prefix}_NAME} STATIC "")
+    endif()
+    target_sources(${${prefix}_NAME} PRIVATE ${${prefix}_SRCS})
+endfunction()
+
 if(MSVC)
     SET(STATIC_LIBRARY_CXX_FLAGS  /MDd CACHE STRING "")
     SET(EXECUTABLE_CXX_FLAGS /MDd  CACHE STRING "")
@@ -180,8 +202,7 @@ ADD_CUSTOM_COMMAND(
     #DEPENDS ${PROJECT_SOURCE_DIR}/NodeIds.csv
   )
 
-
-add_library(opcuaprotocol
+set(opcuaprotocol_SRCS
     src/protocol/rawsize_auto.cpp
     src/protocol/serialize_auto.cpp
     src/protocol/deserialize_auto.cpp
@@ -209,6 +230,7 @@ add_library(opcuaprotocol
     src/protocol/string_utils_statuscode_tostring.cpp
     src/protocol/subscriptions.cpp
 )
+add_library_helper(NAME opcuaprotocol SRCS ${opcuaprotocol_SRCS})
 
 if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
     target_compile_options(opcuaprotocol PUBLIC ${STATIC_LIBRARY_CXX_FLAGS})
@@ -216,9 +238,16 @@ endif ()
 target_compile_options(opcuaprotocol PUBLIC ${ADDITIONAL_PUBLIC_COMPILE_OPTIONS})
 target_link_libraries(opcuaprotocol ${ADDITIONAL_LINK_LIBRARIES})
 target_include_directories(opcuaprotocol PUBLIC $<INSTALL_INTERFACE:include>)
-install(TARGETS opcuaprotocol EXPORT FreeOpcUa
-                              LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-                              ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}/static)
+if (BUILD_SHARED_LIBS)
+    install(TARGETS opcuaprotocol EXPORT FreeOpcUa
+                                  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                                  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                                  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+else()
+    install(TARGETS opcuaprotocol EXPORT FreeOpcUa
+                                  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                                  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
 
 generate_pkgconfig(opcuaprotocol)
 
@@ -264,7 +293,7 @@ endif()
 # core library
 ############################################################################
 
-SET(opcuacore_SOURCES
+set(opcuacore_SRCS
     src/core/common/addons_core/addon_manager.cpp
     src/core/common/addons_core/config_file.cpp
     src/core/common/addons_core/dynamic_library${OS_SUFFIX}.cpp
@@ -290,7 +319,7 @@ SET(opcuacore_SOURCES
     src/core/server_operations.cpp
 )
 
-add_library(opcuacore ${opcuacore_SOURCES})
+add_library_helper(NAME opcuacore SRCS ${opcuacore_SRCS})
 
 if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
     target_compile_options(opcuacore PUBLIC ${STATIC_LIBRARY_CXX_FLAGS})
@@ -299,9 +328,16 @@ endif ()
 target_compile_options(opcuacore PUBLIC ${ADDITIONAL_PUBLIC_COMPILE_OPTIONS})
 target_link_libraries(opcuacore ${ADDITIONAL_LINK_LIBRARIES} opcuaprotocol ${Boost_SYSTEM_LIBRARY} ${Boost_FILESYSTEM_LIBRARY})
 target_include_directories(opcuacore PUBLIC $<INSTALL_INTERFACE:include>)
+if (BUILD_SHARED_LIBS)
 install(TARGETS opcuacore EXPORT FreeOpcUa
                           LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-                          ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}/static)
+                          ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                          RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+else()
+install(TARGETS opcuacore EXPORT FreeOpcUa
+                          LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                          ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
 
 generate_pkgconfig(opcuacore)
 
@@ -347,13 +383,13 @@ endif(BUILD_TESTING)
 # client library
 ############################################################################
 if (BUILD_CLIENT)
-
-    add_library(opcuaclient
-    src/client/binary_connection.cpp
-    src/client/binary_client.cpp
-    src/client/binary_client_addon.cpp
-    src/client/client.cpp
+    set(opcuaclient_SRCS
+        src/client/binary_connection.cpp
+        src/client/binary_client.cpp
+        src/client/binary_client_addon.cpp
+        src/client/client.cpp
     )
+    add_library_helper(NAME opcuaclient SRCS ${opcuaclient_SRCS})
 
     if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
         target_compile_options(opcuaclient PUBLIC ${STATIC_LIBRARY_CXX_FLAGS})
@@ -367,9 +403,16 @@ if (BUILD_CLIENT)
     )
 
     target_include_directories(opcuaclient PUBLIC $<INSTALL_INTERFACE:include>)
-    install(TARGETS opcuaclient EXPORT FreeOpcUa
-                                LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-                                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}/static)
+    if (BUILD_SHARED_LIBS)
+        install(TARGETS opcuaclient EXPORT FreeOpcUa
+                                    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                                    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                                    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    else()
+        install(TARGETS opcuaclient EXPORT FreeOpcUa
+                                    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                                    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    endif()
 
     generate_pkgconfig(opcuaclient)
 
@@ -397,7 +440,6 @@ if (BUILD_CLIENT)
     target_compile_options(opcuaclientapp PUBLIC ${ADDITIONAL_PUBLIC_COMPILE_OPTIONS})
     target_link_libraries(opcuaclientapp
         ${ADDITIONAL_LINK_LIBRARIES}
-        ${Boost_PROGRAM_OPTIONS_LIBRARY}
         opcuaprotocol
         opcuacore
     )
@@ -421,7 +463,7 @@ if(BUILD_SERVER)
     #)
     #ENDFOREACH(PART)
 
-    add_library(opcuaserver
+    set(opcuaserver_SRCS
         src/server/address_space_addon.cpp
         src/server/address_space_internal.cpp
         src/server/asio_addon.cpp
@@ -452,7 +494,8 @@ if(BUILD_SERVER)
         src/server/standard_address_space_addon.cpp
         src/server/subscription_service_addon.cpp
         src/server/subscription_service_internal.cpp
-        )
+    )
+    add_library_helper(NAME opcuaserver SRCS ${opcuaserver_SRCS})
 
     if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)
         target_compile_options(opcuaserver PUBLIC ${STATIC_LIBRARY_CXX_FLAGS})
@@ -460,9 +503,17 @@ if(BUILD_SERVER)
     target_compile_options(opcuaserver PUBLIC ${ADDITIONAL_PUBLIC_COMPILE_OPTIONS})
     target_link_libraries(opcuaserver ${ADDITIONAL_LINK_LIBRARIES} opcuacore opcuaprotocol ${Boost_SYSTEM_LIBRARY})
     target_include_directories(opcuaserver PUBLIC $<INSTALL_INTERFACE:include>)
-    install(TARGETS opcuaserver EXPORT FreeOpcUa
-                                LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-                                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}/static)
+
+    if (BUILD_SHARED_LIBS)
+        install(TARGETS opcuaserver EXPORT FreeOpcUa
+                                    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                                    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                                    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    else()
+        install(TARGETS opcuaserver EXPORT FreeOpcUa
+                                    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                                    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}/static)
+    endif()
 
     generate_pkgconfig(opcuaserver)
 
@@ -542,7 +593,6 @@ if(BUILD_SERVER)
         opcuaprotocol
         opcuacore
         opcuaserver
-        ${Boost_PROGRAM_OPTIONS_LIBRARY}
         ${SSL_SUPPORT_LINK_LIBRARIES}
         )
     if (NOT CMAKE_VERSION VERSION_LESS 2.8.12)

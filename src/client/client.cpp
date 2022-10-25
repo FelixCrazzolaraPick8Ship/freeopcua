@@ -500,7 +500,7 @@ void UaClient::EncryptPassword(OpcUa::UserIdentifyToken &identity, const CreateS
   LOG_DEBUG(Logger, "ua_client             | encrypting password RSA-OAEP");
   auto error2string = [](int err_no) -> std::string
   {
-    auto int_to_hex = [](u_int16_t i) -> std::string
+    auto int_to_hex = [](uint16_t i) -> std::string
     {
       std::stringstream stream;
       stream << std::setfill ('0') << std::setw(sizeof(i)*2) << std::hex << i;
@@ -545,12 +545,12 @@ void UaClient::EncryptPassword(OpcUa::UserIdentifyToken &identity, const CreateS
       }
       {
         mbedtls_rsa_context *rsa = mbedtls_pk_rsa(x509.pk);
-        rsa->padding = MBEDTLS_RSA_PKCS_V21;
-        rsa->hash_id = MBEDTLS_MD_SHA1;
+        rsa->MBEDTLS_PRIVATE(padding) = MBEDTLS_RSA_PKCS_V21;
+        rsa->MBEDTLS_PRIVATE(hash_id) = MBEDTLS_MD_SHA1;
 
         LOG_DEBUG(Logger, "ua_client             | generating the RSA encrypted value...");
 
-        unsigned char buff[rsa->len];
+        unsigned char* buff = new unsigned char[rsa->MBEDTLS_PRIVATE(len)];
         std::string input = identity.UserName.Password;
         input += std::string(response.Parameters.ServerNonce.Data.begin(), response.Parameters.ServerNonce.Data.end());
         {
@@ -564,15 +564,17 @@ void UaClient::EncryptPassword(OpcUa::UserIdentifyToken &identity, const CreateS
           input = sn + input;
         }
 
-        ret = mbedtls_rsa_pkcs1_encrypt( rsa, mbedtls_ctr_drbg_random, &ctr_drbg, MBEDTLS_RSA_PUBLIC, input.size(), (const unsigned char*)input.data(), buff );
+        ret = mbedtls_rsa_pkcs1_encrypt( rsa, mbedtls_ctr_drbg_random, &ctr_drbg, input.size(), (const unsigned char*)input.data(), buff );
         if( ret != 0 ) {
           LOG_ERROR(Logger, "ua_client             | error RSA encryption {}", error2string(ret) );
+          delete[] buff;
           goto exit2;
         }
         LOG_DEBUG(Logger, "ua_client             | encrypted password: {}", hex(std::vector<unsigned char>(buff, buff + sizeof(buff))));
 
-        identity.UserName.Password = std::string((const char*)buff, rsa->len);
+        identity.UserName.Password = std::string((const char*)buff, rsa->MBEDTLS_PRIVATE(len));
         identity.UserName.EncryptionAlgorithm = "http://www.w3.org/2001/04/xmlenc#rsa-oaep";
+        delete[] buff;
       }
 exit2:
       mbedtls_ctr_drbg_free( &ctr_drbg );
