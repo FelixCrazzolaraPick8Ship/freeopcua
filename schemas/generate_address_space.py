@@ -83,6 +83,9 @@ class CodeGenerator(object):
             elif child.tag[51:] == 'UADataType':
                 node = self.parse_node(child)
                 self.make_datatype_code(node)
+            elif child.tag[51:] == 'UAMethod':
+                node = self.parse_node(child)
+                self.make_method_code(node)
             else:
                 sys.stderr.write("Not implemented node type: " + child.tag[51:] + "\n")
         self.writecode('''
@@ -100,6 +103,8 @@ void CreateAddressSpace%s(OpcUa::NodeManagementServices & registry)
             elif child.tag[51:] == 'UAReferenceType':
                 pass
             elif child.tag[51:] == 'UADataType':
+                pass
+            elif child.tag[51:] == 'UAMethod':
                 pass
             else:
                 continue
@@ -337,7 +342,19 @@ namespace OpcUa
         self.make_refs_code(obj, indent)
         self.writecode("}")
 
-
+    def make_method_code(self, obj):
+        indent = "   "
+        self.writecode("")
+        self.writecode('static void create_{}(OpcUa::NodeManagementServices & registry)'.format(obj.nodeid[2:]))
+        self.writecode("{")
+        self.make_node_code(obj, indent)
+        self.writecode(indent, 'MethodAttributes attrs;')
+        if obj.desc: self.writecode(indent, 'attrs.Description = LocalizedText("{}");'.format(obj.desc))
+        self.writecode(indent, 'attrs.DisplayName = LocalizedText("{}");'.format(obj.displayname))
+        self.writecode(indent, 'node.Attributes = attrs;')
+        self.writecode(indent, 'registry.AddNodes(std::vector<AddNodesItem> {node});')
+        self.make_refs_code(obj, indent)
+        self.writecode("}")
 
     def make_reference_code(self, obj):
         indent = " "
